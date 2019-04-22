@@ -38,7 +38,8 @@ from oidc_provider.lib.errors import (
     RedirectUriError,
     TokenError,
     UserAuthError,
-    TokenIntrospectionError)
+    TokenIntrospectionError,
+    JustRedirect)
 from oidc_provider.lib.utils.authorize import strip_prompt_login
 from oidc_provider.lib.utils.common import (
     redirect,
@@ -59,7 +60,31 @@ from oidc_provider import signals
 logger = logging.getLogger(__name__)
 
 OIDC_TEMPLATES = settings.get('OIDC_TEMPLATES')
+AUTHORIZE_CONTEXT_TRANSFORMER = settings.get('OIDC_CONTEXT_TRANSFORMERS', import_str=True, key='authorize')
+OIDC_PRIOR_TO_REDIRECT_HOOK = settings.get('OIDC_PRIOR_TO_REDIRECT_HOOK', import_str=True)
+OIDC_DECLINED_USERCONSENT_HOOK = settings.get('OIDC_DECLINED_USERCONSENT_HOOK', import_str=True)
 
+def call_oidc_prior_to_redirect_hook(request, client):
+    if OIDC_PRIOR_TO_REDIRECT_HOOK:
+        OIDC_PRIOR_TO_REDIRECT_HOOK(request=request, user=request.user, client=client)
+
+def call_oidc_declined_userconsent_hook(request, client):
+    if OIDC_DECLINED_USERCONSENT_HOOK:
+        OIDC_DECLINED_USERCONSENT_HOOK(request=request, user=request.user, client=client)
+
+def check_login_required(request, authorize):
+    """
+    Raises AuthorizeError or JustRedirect if login is required for this auth.
+    """
+    if 'login' in authorize.params['prompt'] or request.user.is_anonymous:
+        if 'none' in authorize.params['prompt']:
+            raise AuthorizeError(
+                authorize.params['redirect_uri'], 'login_required',
+                authorize.grant_type)
+        else:
+            django_user_logout(request)
+            full_path = strip_prompt_login(request.get_full_path())
+            raise JustRedirect(redirect_to_login(full_path, settings.get('OIDC_LOGIN_URL')))
 
 class AuthorizeView(View):
     authorize_endpoint_class = AuthorizeEndpoint
@@ -78,15 +103,7 @@ class AuthorizeView(View):
                 if hook_resp:
                     return hook_resp
 
-                if 'login' in authorize.params['prompt']:
-                    if 'none' in authorize.params['prompt']:
-                        raise AuthorizeError(
-                            authorize.params['redirect_uri'], 'login_required',
-                            authorize.grant_type)
-                    else:
-                        django_user_logout(request)
-                        next_page = strip_prompt_login(request.get_full_path())
-                        return redirect_to_login(next_page, settings.get('OIDC_LOGIN_URL'))
+                check_login_required(request, authorize)
 
                 if 'select_account' in authorize.params['prompt']:
                     # TODO: see how we can support multiple accounts for the end-user.
@@ -111,6 +128,7 @@ class AuthorizeView(View):
                 if not authorize.client.require_consent and (
                         allow_skipping_consent and
                         'consent' not in authorize.params['prompt']):
+                    call_oidc_prior_to_redirect_hook(request, authorize.client)
                     return redirect(authorize.create_response_uri())
 
                 if authorize.client.reuse_consent:
@@ -118,6 +136,7 @@ class AuthorizeView(View):
                     if authorize.client_has_user_consent() and (
                             allow_skipping_consent and
                             'consent' not in authorize.params['prompt']):
+                        call_oidc_prior_to_redirect_hook(request, authorize.client)
                         return redirect(authorize.create_response_uri())
 
                 if 'none' in authorize.params['prompt']:
@@ -141,6 +160,10 @@ class AuthorizeView(View):
                     'params': authorize.params,
                     'scopes': authorize.get_scopes_information(),
                 }
+
+                # Extra OIDC context, if required, from a callable.
+                if AUTHORIZE_CONTEXT_TRANSFORMER:
+                    context = AUTHORIZE_CONTEXT_TRANSFORMER(request, context)
 
                 return render(request, OIDC_TEMPLATES['authorize'], context)
             else:
@@ -167,6 +190,8 @@ class AuthorizeView(View):
                 authorize.params['state'])
 
             return redirect(uri)
+        except JustRedirect as error:
+            return error.redirection
 
     def post(self, request, *args, **kwargs):
         authorize = AuthorizeEndpoint(request)
@@ -174,10 +199,14 @@ class AuthorizeView(View):
         try:
             authorize.validate_params()
 
+            check_login_required(request, authorize)
+
             if not request.POST.get('allow'):
                 signals.user_decline_consent.send(
                     self.__class__, user=request.user,
                     client=authorize.client, scope=authorize.params['scope'])
+
+                call_oidc_declined_userconsent_hook(request, authorize.client)
 
                 raise AuthorizeError(authorize.params['redirect_uri'],
                                      'access_denied',
@@ -192,6 +221,7 @@ class AuthorizeView(View):
 
             uri = authorize.create_response_uri()
 
+            call_oidc_prior_to_redirect_hook(request, authorize.client)
             return redirect(uri)
 
         except AuthorizeError as error:
@@ -200,6 +230,17 @@ class AuthorizeView(View):
                 authorize.params['state'])
 
             return redirect(uri)
+        except JustRedirect as error:
+            # TODO we're trying to redirect to a login page here, but can't at this point as
+            # 1. We don't have all the query parameters
+            # 2. The nonce is wrong.
+            # So just display an error.
+            context = {
+                'error': "Logged out",
+                'description': "You have logged out or your session has timed out. Please re-try the authorization.",
+            }
+
+            return render(request, OIDC_TEMPLATES['error'], context)
 
 
 class TokenView(View):

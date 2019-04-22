@@ -189,3 +189,11 @@ class BearerTokenError(Exception):
         error_tuple = self._errors.get(code, ('', ''))
         self.description = error_tuple[0]
         self.status = error_tuple[1]
+
+class JustRedirect(Exception):
+    """
+    A login is required, but not in an error context.
+    """
+    def __init__(self, redirection):
+        self.redirection = redirection
+

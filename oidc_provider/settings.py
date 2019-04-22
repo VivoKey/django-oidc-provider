@@ -49,6 +49,13 @@ class DefaultSettings(object):
         return 60*10
 
     @property
+    def OIDC_CONTEXT_TRANSFORMERS(self):
+        """
+        OPTIONAL. Dict of context transformers
+        """
+        return {}
+
+    @property
     def OIDC_EXTRA_SCOPE_CLAIMS(self):
         """
         OPTIONAL. A string with the location of your class.
@@ -168,6 +175,13 @@ class DefaultSettings(object):
             'error': 'oidc_provider/error.html'
         }
 
+    @property
+    def OIDC_PRIOR_TO_REDIRECT_HOOK(self):
+        return None
+
+    @property
+    def OIDC_DECLINED_USERCONSENT_HOOK(self):
+        return None
 
 default_settings = DefaultSettings()
 
@@ -186,7 +200,7 @@ def import_from_str(value):
         raise ImportError(msg)
 
 
-def get(name, import_str=False):
+def get(name, import_str=False, key=None):
     """
     Helper function to use inside the package.
     """
@@ -205,6 +219,11 @@ def get(name, import_str=False):
     else:
         if value is None:
             value = default_value
-        value = import_from_str(value) if import_str else value
+
+    if isinstance(value, dict) and key is not None:
+        value = value.get(key)
+
+    if import_str and value:
+        value = import_from_str(value)
 
     return value
