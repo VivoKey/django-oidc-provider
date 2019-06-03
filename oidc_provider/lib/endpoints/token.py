@@ -23,8 +23,9 @@ from oidc_provider.models import (
 )
 from oidc_provider import settings
 
-logger = logging.getLogger(__name__)
+from .urlchecking import redirect_uri_valid
 
+logger = logging.getLogger(__name__)
 
 class TokenEndpoint(object):
 
@@ -65,7 +66,7 @@ class TokenEndpoint(object):
                 raise TokenError('invalid_client')
 
         if self.params['grant_type'] == 'authorization_code':
-            if not (self.params['redirect_uri'] in self.client.redirect_uris):
+            if not redirect_uri_valid(self.params['redirect_uri'], self.client.redirect_uris):
                 logger.debug('[Token] Invalid redirect uri: %s', self.params['redirect_uri'])
                 raise TokenError('invalid_client')
 
