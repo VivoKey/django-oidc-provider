@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 Unreleased
 ==========
 
+* Fixed: example project on Django 2.1.
+* Fixed: example in docs for translatable scopes (ugettext).
+
 0.7.0
 =====
 
