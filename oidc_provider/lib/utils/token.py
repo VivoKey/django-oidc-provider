@@ -19,11 +19,15 @@ from oidc_provider.models import (
 from oidc_provider import settings
 
 
-def create_id_token(token, user, aud, nonce='', at_hash='', request=None, scope=None):
+def create_id_token(token, user, aud, nonce='', at_hash='', request=None, scope=None, include_claims=None):
     """
     Creates the id_token dictionary.
     See: http://openid.net/specs/openid-connect-core-1_0.html#IDToken
     Return a dic.
+
+    Args:
+        include_claims: True to include claims, False not to include claims, None to use
+            settings.OIDC_IDTOKEN_INCLUDE_CLAIMS
     """
     if scope is None:
         scope = []
@@ -54,7 +58,9 @@ def create_id_token(token, user, aud, nonce='', at_hash='', request=None, scope=
         dic['at_hash'] = at_hash
 
     # Inlude (or not) user standard claims in the id_token.
-    if settings.get('OIDC_IDTOKEN_INCLUDE_CLAIMS'):
+    include_claims = settings.get('OIDC_IDTOKEN_INCLUDE_CLAIMS') if include_claims is None else include_claims
+
+    if include_claims:
         if settings.get('OIDC_EXTRA_SCOPE_CLAIMS'):
             custom_claims = settings.get('OIDC_EXTRA_SCOPE_CLAIMS', import_str=True)(token)
             claims = custom_claims.create_response_dic()

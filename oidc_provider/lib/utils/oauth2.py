@@ -87,7 +87,7 @@ def protected_resource_view(scopes=None, unprotected_methods=None):
                     raise BearerTokenError('invalid_token')
 
                 if not set(scopes).issubset(set(kwargs['token'].scope)):
-                    logger.debug('[UserInfo] Missing openid scope.')
+                    logger.debug('[UserInfo] Missing openid scope: need %s but have %s.', scopes, kwargs['token'].scope)
                     raise BearerTokenError('insufficient_scope')
             except BearerTokenError as error:
                 response = HttpResponse(status=error.status)
